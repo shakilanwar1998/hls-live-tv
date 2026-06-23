@@ -20,7 +20,7 @@ SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=20)
 SCP_OPTS=(-P "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=20)
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-cp "$ROOT/public/index.html" "$ROOT/public/app.js" "$ROOT/public/style.css" "$TMP/"
+cp "$ROOT/public/index.html" "$ROOT/public/app.js" "$ROOT/public/style.css" "$ROOT/public/hls.min.js" "$TMP/"
 cp "$ROOT/deploy/hostinger/proxy.php" "$ROOT/deploy/hostinger/.htaccess"      "$TMP/"
 
 echo "→ Linting proxy.php locally (if php present) …"
@@ -28,14 +28,14 @@ command -v php >/dev/null 2>&1 && php -l "$TMP/proxy.php"
 
 echo "→ Uploading docroot to $SSH_HOST:~/$DOCROOT …"
 scp "${SCP_OPTS[@]}" \
-  "$TMP/index.html" "$TMP/app.js" "$TMP/style.css" "$TMP/proxy.php" "$TMP/.htaccess" \
+  "$TMP/index.html" "$TMP/app.js" "$TMP/style.css" "$TMP/hls.min.js" "$TMP/proxy.php" "$TMP/.htaccess" \
   "$SSH_HOST:~/$DOCROOT/"
 
 echo "→ Fixing perms + server-side lint …"
 ssh "${SSH_OPTS[@]}" "$SSH_HOST" "bash -s" <<REMOTE
 set -e
 cd "\$HOME/$DOCROOT"
-chmod 644 index.html app.js style.css proxy.php .htaccess
+chmod 644 index.html app.js style.css hls.min.js proxy.php .htaccess
 php -l proxy.php
 REMOTE
 
