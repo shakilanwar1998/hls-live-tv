@@ -1,0 +1,18 @@
+# wc.shakilanwar.com — HLS live player (PHP deployment)
+# Serve the static UI from index.html and route the app's /proxy endpoint to proxy.php.
+
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Frontend calls /proxy?url=... — map it to the PHP proxy, keeping the query string.
+  RewriteRule ^proxy/?$ proxy.php [QSA,L]
+</IfModule>
+
+# Let the browser cache the static assets briefly; the proxy sets its own headers.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(css|js)$">
+    Header set Cache-Control "public, max-age=300"
+  </FilesMatch>
+</IfModule>
