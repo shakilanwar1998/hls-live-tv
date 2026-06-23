@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Archives / backups
+Archive.zip
+*.zip

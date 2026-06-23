@@ -1,0 +1,229 @@
+:root {
+  --bg: #000;
+  --panel: #151922;
+  --line: #232936;
+  --text: #e8ebf2;
+  --muted: #b9c0d0;
+  --accent: #4f7cff;
+  --live: #ff3b30;
+}
+
+* { box-sizing: border-box; }
+
+/* The `hidden` attribute is our show/hide switch for overlays. An author
+   `display` (flex/grid below) would otherwise beat the UA `[hidden]` rule and
+   leave those overlays permanently visible — so enforce it explicitly. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* ── Player: fills the whole viewport ────────── */
+.player {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  background: #000;
+  overflow: hidden;
+}
+.player video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+  object-fit: contain; /* show the whole frame, never crop the score bug */
+}
+
+/* Hide the cursor when the chrome is hidden (immersive) */
+.player.idle { cursor: none; }
+
+/* Unmute / play prompt — a clean, centered pill */
+.unmute-btn {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 18px 11px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(18, 20, 27, 0.66);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  z-index: 6;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.08s ease;
+}
+.unmute-btn:hover { background: rgba(34, 38, 48, 0.82); border-color: rgba(255, 255, 255, 0.28); }
+.unmute-btn:active { transform: translate(-50%, -50%) scale(0.97); }
+.unmute-btn .ub-icon { width: 20px; height: 20px; fill: #fff; flex: none; }
+.unmute-btn .ub-play { display: none; margin-left: 2px; }
+.unmute-btn.is-play .ub-sound { display: none; }
+.unmute-btn.is-play .ub-play { display: inline-block; }
+
+/* Badges (fade together with the controls) */
+.badges {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.player:hover .badges,
+.player.show-controls .badges { opacity: 1; }
+.badge {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+}
+.badge.live { color: #fff; background: var(--live); }
+.badge.behind { color: #ffd76a; background: rgba(0, 0, 0, 0.65); }
+
+/* Reconnect indicator — non-blocking, stays visible while recovering */
+.reconnect-badge {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 6px 11px;
+  border-radius: 6px;
+  color: #ffd76a;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* Spinner */
+.spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 52px;
+  height: 52px;
+  border: 4px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  pointer-events: none; /* never block clicks on the video */
+  z-index: 4;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Error panel — blocking, only shown when playback is truly dead */
+.error-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.82);
+  text-align: center;
+  padding: 24px;
+  z-index: 10;
+}
+.error-icon { font-size: 42px; }
+.error-msg { color: var(--muted); max-width: 480px; font-size: 15px; line-height: 1.5; }
+.error-panel button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 11px 22px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 14px;
+}
+.error-panel button:hover { filter: brightness(1.1); }
+
+/* Controls (auto-hide; visible on hover / movement) */
+.controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
+  opacity: 0;
+  transition: opacity 0.25s;
+  z-index: 8;
+}
+.player:hover .controls,
+.player.show-controls .controls { opacity: 1; }
+.spacer { flex: 1; }
+
+.ctrl {
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 7px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+}
+.ctrl:hover { background: rgba(255, 255, 255, 0.15); }
+.ctrl svg { width: 24px; height: 24px; fill: #fff; }
+
+.live-btn {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 7px 11px;
+  color: var(--muted);
+}
+.live-btn.at-live { color: var(--live); }
+
+.volume { display: flex; align-items: center; gap: 6px; }
+.volume input[type="range"] {
+  width: 90px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Stats overlay */
+.stats {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #cfe;
+  z-index: 7;
+  min-width: 180px;
+}
+.stats b { color: #fff; font-weight: 600; }
+.stats .row { display: flex; justify-content: space-between; gap: 16px; }
+
+@media (max-width: 560px) {
+  .volume input[type="range"] { display: none; }
+}
