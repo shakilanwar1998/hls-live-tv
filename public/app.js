@@ -478,8 +478,8 @@ function isPlayable(url) {
   return u.includes('m3u8');
 }
 
-// Prefer a globally-reliable channel as the initial pick; else the first one.
-const PREFERRED = [/al jazeera/i, /france 24/i, /euronews/i, /\bdw\b/i, /red bull/i, /nasa/i];
+// Prefer a globally-reliable, always-on channel as the initial pick; else the first.
+const PREFERRED = [/bloomberg/i, /al jazeera english/i, /france 24/i, /euronews/i, /\bdw\b/i, /nasa/i];
 function pickDefault(list) {
   for (const re of PREFERRED) { const i = list.findIndex((c) => re.test(c.name)); if (i >= 0) return i; }
   return 0;
