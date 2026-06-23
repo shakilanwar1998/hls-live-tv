@@ -9,8 +9,15 @@ const DEFAULT_STREAM =
 
   
 
-// Every stream goes through our local proxy (adds CORS, rewrites the playlist).
-const proxied = (url) => '/proxy?url=' + encodeURIComponent(url);
+// Toffee (and many live CDNs) send no CORS headers, so hls.js — Chrome / Android /
+// Firefox, which fetch via XHR — can't read them cross-origin and must go through a
+// CORS proxy. Toffee also geo-restricts to Bangladesh, so for those browsers the
+// proxy has to be hosted *in* Bangladesh. Point PROXY_BASE at that BD proxy (running
+// proxy.php); '' = this same-origin server (fine for streams not geo-blocked from it).
+// Safari / iOS use native HLS, which is NOT CORS-gated — they load the stream
+// directly from the viewer's location, so Toffee plays from BD with no proxy at all.
+const PROXY_BASE = ''; // e.g. 'https://your-bd-proxy.example.com'
+const proxied = (url) => PROXY_BASE.replace(/\/+$/, '') + '/proxy?url=' + encodeURIComponent(url);
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -25,8 +32,8 @@ const els = {
 
 let hls = null;
 let currentUrl = '';
+let useProxy = false; // load direct first; flip true if a direct load fails (e.g. CORS)
 let statsOn = false;
-
 /* ── Recovery model ──────────────────────────
  * Live streams hiccup (CDN blips, playlist-refresh timeouts, segment gaps),
  * especially on flaky connections. The golden rule here: while the video is
@@ -108,6 +115,16 @@ function rebuild() {
   if (currentUrl) load(currentUrl, { preserveRetries: true });
 }
 
+// The first attempt loads the source directly (works for Safari/iOS native HLS and
+// any CORS-enabled stream). If a direct load fails before playback starts — e.g.
+// hls.js blocked by missing CORS headers — switch to the proxy once and rebuild.
+function fallbackToProxy() {
+  if (useProxy || hasPlayed) return false;
+  useProxy = true;
+  setTimeout(rebuild, 0); // defer: don't tear down hls inside its own error handler
+  return true;
+}
+
 function onHlsError(_evt, data) {
   if (!data.fatal) return; // non-fatal errors (buffer stalls, gaps) self-resolve
   const D = Hls.ErrorDetails;
@@ -119,6 +136,7 @@ function onHlsError(_evt, data) {
           data.details === D.MANIFEST_LOAD_TIMEOUT ||
           data.details === D.MANIFEST_PARSING_ERROR ||
           data.details === D.LEVEL_EMPTY_ERROR) {
+        if (fallbackToProxy()) break; // direct fetch blocked (e.g. CORS) → try the proxy
         scheduleRecover(rebuild);
       } else {
         scheduleRecover(() => hls.startLoad());
@@ -196,12 +214,13 @@ function load(rawUrl, opts = {}) {
     recoverDelay = 0;
     mediaRecovers = 0;
     hasPlayed = false;
+    useProxy = false; // each new stream starts direct-first
     lastProgressAt = now();
     initLoadAt = now();
   }
   clearRecoverTimer();
 
-  const src = proxied(url);
+  const src = useProxy ? proxied(url) : url;
   const video = els.video;
 
   if (window.Hls && Hls.isSupported()) {
@@ -223,11 +242,14 @@ function load(rawUrl, opts = {}) {
 
     hls.attachMedia(video);
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    // Native HLS (Safari / iOS). Same-origin via proxy → no CORS issue.
+    // Native HLS (Safari / iOS): not CORS-gated, so load the stream directly from
+    // the viewer's location — geo-locked feeds like Toffee play from BD with no proxy.
     video.src = src;
     video.addEventListener('loadedmetadata', () => { showSpinner(false); tryPlay(); }, { once: true });
-    // Transient native failures are absorbed by the health check / rebuild.
-    video.addEventListener('error', () => scheduleRecover(rebuild), { once: true });
+    video.addEventListener('error', () => {
+      if (fallbackToProxy()) return;        // direct load failed → try the proxy once
+      scheduleRecover(rebuild);             // otherwise absorb as a transient blip
+    }, { once: true });
   } else {
     showError('Unsupported browser', 'HLS is not supported here. Try Chrome, Edge, Firefox, or Safari.');
   }
