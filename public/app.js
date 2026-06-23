@@ -1,15 +1,12 @@
 'use strict';
 
-// The World Cup live feed. (URL loader removed — this is a dedicated player.)
-const DEFAULT_STREAM =
-  'https://prod-cdn01-live.toffeelive.com/live/FIFA-2026-4/1/master_1800.m3u8';
+// Live TV channel list (Free-TV/IPTV). Fetched + parsed at boot into the channel
+// picker. It's served with permissive CORS, so the browser fetches it directly.
+const PLAYLIST_URL = 'https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8';
+// Last-resort single stream if the playlist can't be fetched/parsed.
+const FALLBACK_STREAM = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
 
-  // const DEFAULT_STREAM =
-  // 'https://live.thebosstv.com:30443/dwlive/Somoy-TV/chunks.m3u8';
-
-  
-
-// Toffee (and many live CDNs) send no CORS headers, so hls.js — Chrome / Android /
+// Many live CDNs send no CORS headers, so hls.js — Chrome / Android /
 // Firefox, which fetch via XHR — can't read them cross-origin and must go through a
 // CORS proxy. Toffee also geo-restricts to Bangladesh, so for those browsers the
 // proxy has to be hosted *in* Bangladesh. Point PROXY_BASE at that BD proxy (running
@@ -28,12 +25,17 @@ const els = {
   playPause: $('playPause'), muteBtn: $('muteBtn'), volSlider: $('volSlider'),
   goLiveBtn: $('goLiveBtn'), statsBtn: $('statsBtn'), stats: $('stats'),
   pipBtn: $('pipBtn'), fsBtn: $('fsBtn'),
+  channelsToggle: $('channelsToggle'), channelPanel: $('channelPanel'),
+  channelSearch: $('channelSearch'), channelClose: $('channelClose'),
+  channelList: $('channelList'), channelCount: $('channelCount'), nowPlaying: $('nowPlaying'),
 };
 
 let hls = null;
 let currentUrl = '';
 let useProxy = false; // load direct first; flip true if a direct load fails (e.g. CORS)
 let statsOn = false;
+let channels = [];          // parsed playable channels from the playlist
+let currentChannelIdx = -1; // index into channels of what's playing
 /* ── Recovery model ──────────────────────────
  * Live streams hiccup (CDN blips, playlist-refresh timeouts, segment gaps),
  * especially on flaky connections. The golden rule here: while the video is
@@ -441,13 +443,154 @@ document.addEventListener('keydown', (e) => {
     case 'f': els.fsBtn.click(); break;
     case 'l': goLive(); break;
     case 'i': els.statsBtn.click(); break;
+    case 'c': toggleChannels(); break;
+    case 'escape': closeChannels(); break;
   }
 });
 
 setInterval(() => { updateLiveState(); renderStats(); healthCheck(); }, 1000);
 
+/* ── Channel browser ─────────────────────────── */
+// Parse an M3U/IPTV playlist into {name, logo, group, url} entries.
+function parseM3U(text) {
+  const out = [];
+  let meta = null;
+  for (const raw of (text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('#EXTINF')) {
+      const name = (line.split(',').slice(1).join(',') || '').trim();
+      const logo = (line.match(/tvg-logo="([^"]*)"/) || [])[1] || '';
+      const group = (line.match(/group-title="([^"]*)"/) || [])[1]
+                 || (line.match(/tvg-country="([^"]*)"/) || [])[1] || '';
+      meta = { name, logo, group };
+    } else if (!line.startsWith('#')) {
+      if (meta) { meta.url = line; out.push(meta); meta = null; }
+    }
+  }
+  return out;
+}
+
+// Keep only channels hls.js can play (HLS); drop YouTube/Twitch/Facebook/DASH.
+function isPlayable(url) {
+  const u = (url || '').toLowerCase();
+  if (/youtube\.com|youtu\.be|twitch\.tv|facebook\.com|\.mpd(\?|$)/.test(u)) return false;
+  return u.includes('m3u8');
+}
+
+// Prefer a globally-reliable channel as the initial pick; else the first one.
+const PREFERRED = [/al jazeera/i, /france 24/i, /euronews/i, /\bdw\b/i, /red bull/i, /nasa/i];
+function pickDefault(list) {
+  for (const re of PREFERRED) { const i = list.findIndex((c) => re.test(c.name)); if (i >= 0) return i; }
+  return 0;
+}
+
+async function fetchText(url) {
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.text();
+}
+
+async function initChannels() {
+  showSpinner(true);
+  let text = '';
+  try { text = await fetchText(PLAYLIST_URL); }
+  catch { try { text = await fetchText(proxied(PLAYLIST_URL)); } catch { /* offline */ } }
+
+  channels = parseM3U(text).filter((c) => isPlayable(c.url));
+  if (!channels.length) {
+    channels = [{ name: 'Test stream', group: '', logo: '', url: FALLBACK_STREAM }];
+  }
+  renderChannels();
+  selectChannel(pickDefault(channels));
+}
+
+// Build the channel list with the DOM API (never innerHTML — playlist is untrusted).
+function renderChannels() {
+  const frag = document.createDocumentFragment();
+  channels.forEach((c, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'ch-item';
+    btn.type = 'button';
+    btn.dataset.idx = String(i);
+    btn.dataset.search = (c.name + ' ' + c.group).toLowerCase();
+
+    if (c.logo) {
+      const img = document.createElement('img');
+      img.className = 'ch-logo';
+      img.loading = 'lazy';
+      img.alt = '';
+      img.src = c.logo;
+      img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+      btn.appendChild(img);
+    } else {
+      const ph = document.createElement('span');
+      ph.className = 'ch-logo';
+      btn.appendChild(ph);
+    }
+
+    const text = document.createElement('span');
+    text.className = 'ch-text';
+    const name = document.createElement('span');
+    name.className = 'ch-name';
+    name.textContent = c.name;
+    const group = document.createElement('span');
+    group.className = 'ch-group';
+    group.textContent = c.group;
+    text.append(name, group);
+    btn.appendChild(text);
+
+    frag.appendChild(btn);
+  });
+  els.channelList.replaceChildren(frag);
+  els.channelCount.textContent = channels.length + ' channels';
+}
+
+function selectChannel(idx) {
+  const c = channels[idx];
+  if (!c) return;
+  currentChannelIdx = idx;
+  els.nowPlaying.textContent = c.name;
+  document.title = c.name + ' · Live TV';
+  for (const el of els.channelList.children) {
+    el.classList.toggle('active', el.dataset.idx === String(idx));
+  }
+  closeChannels();
+  load(c.url);
+}
+
+function filterChannels(q) {
+  const query = q.trim().toLowerCase();
+  let shown = 0;
+  for (const el of els.channelList.children) {
+    const match = !query || el.dataset.search.includes(query);
+    el.style.display = match ? '' : 'none';
+    if (match) shown++;
+  }
+  els.channelCount.textContent = shown + (query ? ' matches' : ' channels');
+}
+
+function openChannels() {
+  els.channelPanel.hidden = false;
+  const active = els.channelList.querySelector('.ch-item.active');
+  if (active) active.scrollIntoView({ block: 'center' });
+  els.channelSearch.focus();
+}
+function closeChannels() { els.channelPanel.hidden = true; }
+function toggleChannels() { els.channelPanel.hidden ? openChannels() : closeChannels(); }
+
+els.channelsToggle.addEventListener('click', toggleChannels);
+els.channelClose.addEventListener('click', closeChannels);
+els.channelSearch.addEventListener('input', () => filterChannels(els.channelSearch.value));
+els.channelSearch.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChannels(); });
+els.channelList.addEventListener('click', (e) => {
+  const item = e.target.closest('.ch-item');
+  if (item) selectChannel(Number(item.dataset.idx));
+});
+
 // Boot
 if (!document.pictureInPictureEnabled && !els.video.webkitSupportsPresentationMode) els.pipBtn.hidden = true;
 syncPlayUI();
 syncMuteUI();
-load(DEFAULT_STREAM);
+wakeControls();   // reveal the chrome (incl. the Channels button) on first load
+initChannels();
